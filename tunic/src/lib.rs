@@ -83,7 +83,7 @@ pub struct State {
 pub async fn axum_serve(
     host: &str,
     port: u16,
-    admin_user: impl Into<String> + Copy,
+    admin_user: impl Into<String> + Clone,
     admin_pass: impl Into<String>,
     domains: Arc<HashMap<String, Router>>,
 ) -> Serve<TcpListener, Router, Router> {
@@ -95,7 +95,7 @@ pub async fn axum_serve(
     };
 
     println!("[INFO] Initializing root user...");
-    let admin = admin::Admin::new(admin_user, admin_pass);
+    let admin = admin::Admin::new(admin_user.clone(), admin_pass);
     match state.admins.insert(*admin.get_id(), admin).await {
         Some(_) => {
             println!("[INFO] Root user already created as {}", admin_user.into());
