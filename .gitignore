@@ -1,0 +1,9 @@
+
+# Cargo files
+Cargo.lock
+target/
+
+# Project files
+.env
+app.db
+files/
