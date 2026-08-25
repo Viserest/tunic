@@ -30,45 +30,6 @@ impl Parse for MakeUserArgs {
 ///
 /// Attributes:
 /// #[username], and #[password] must be provided. This allows custom field names to be used.
-///
-/// Example struct creates the impl block:
-/// ```rust
-/// #[MakeUser(namespace = "23a8e8b7-3161-445c-aaa7-3640c8db2444")]
-/// struct Admin {
-///     #[username]
-///     username: String,
-///     #[password]
-///     password: String,
-///     permissions: Vec<Permission>,
-///     role: Option<String>,
-/// }
-///
-/// impl Admin {
-///     pub fn new(username: String, password: String) -> Self {
-///         Self {
-///             id: Uuid::new_v5(namespace, username),
-///             username,
-///             password,
-///             permissions: Vec::new(),
-///             role: None,
-///         }
-///     }
-///     pub fn verify(&self, password: String) -> bool {
-///         let hash = PasswordHash::new(&self.password).unwrap();
-///         Argon2::default()
-///             .verify_password(password.as_bytes(), &hash)
-///             .is_ok()
-///     }
-///     pub fn reset_password(&mut self, old_password: String, new_password: String) -> bool {
-///         if self.verify(old_password) {
-///             self.password = password_hash(new_password);
-///             return true;
-///         }
-///         false
-///     }
-/// }
-/// ```
-///
 #[proc_macro_attribute]
 pub fn make_user(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse macro attributes: #[make_user(namespace = "...")]
@@ -423,7 +384,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                         #(#not_post_field_names: ::std::default::Default::default(),)*
                     };
                     if (#table).insert(value.id, value).await.is_some() {
-                        println!("[WARN] Entry overwrote a key.");
+                        tracing::warn!("Entry overwrote a key.");
                     }
 
                     (
@@ -489,7 +450,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let value = match (#table).get_mut(&payload.id).await {
                         Some(a) => a,
                         None => {
-                            println!("[WARN] Table put ran and errored: table returned none.");
+                            tracing::warn!("Table put ran and errored: table returned none.");
                             return (
                                 ::axum::http::StatusCode::BAD_REQUEST,
                                 ::axum::Json(::serde_json::json!({"msg": "Missing 'id' field"})),
@@ -501,7 +462,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                     // If field is optional vs not
                     #(#put_field_updates;)*
 
-                    println!("[INFO Table put ran");
+                    tracing::info!("Table put ran");
                     (
                         ::axum::http::StatusCode::OK,
                         ::axum::Json(::serde_json::json!({"msg": "Updated whatever"})),
@@ -514,7 +475,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let value = match (#table).get_mut(&id).await {
                         Some(a) => a,
                         None => {
-                            println!("[WARN] Table delete ran and errored: table returned none.");
+                            tracing::warn!("Table delete ran and errored: table returned none.");
                             return (
                                 ::axum::http::StatusCode::BAD_REQUEST,
                                 ::axum::Json(::serde_json::json!({"msg": "Returned nothing"})),
@@ -526,7 +487,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                 },
                 _ => quote! {
                     if (#table).remove(&id).await.is_none() {
-                        println!("[WARN] Table delete ran and errored: table returned none.");
+                        tracing::warn!("Table delete ran and errored: table returned none.");
                         return (
                             ::axum::http::StatusCode::BAD_REQUEST,
                             ::axum::Json(::serde_json::json!({"msg": "Returned nothing"})),
@@ -546,7 +507,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
                     {
                         Some(a) => a,
                         None => {
-                            println!("[WARN] Table delete ran and errored: id not found in payload.");
+                            tracing::warn!("Table delete ran and errored: id not found in payload.");
                             return (
                                 ::axum::http::StatusCode::BAD_REQUEST,
                                 ::axum::Json(::serde_json::json!({"msg": "Missing 'id' field"})),
@@ -556,7 +517,7 @@ pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                     #delete_tokens
 
-                    println!("[INFO] Table delete ran");
+                    tracing::info!("Table delete ran");
                     return (
                         ::axum::http::StatusCode::OK,
                         ::axum::Json(::serde_json::json!({"msg": "Successfully removed"})),

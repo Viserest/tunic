@@ -54,7 +54,7 @@ macro_rules! make_list {
                 {
                     Some(a) => a,
                     None => {
-                        println!("[WARN] Could not find field 'new' in payload");
+                        tracing::warn!("Could not find field 'new' in payload");
                         return (
                             ::axum::http::StatusCode::BAD_REQUEST,
                             ::axum::Json(::serde_json::json!({"msg": "Missing field 'new'"})),
@@ -63,10 +63,10 @@ macro_rules! make_list {
                     }
                 };
                 if state.$list.insert(new).await {
-                    println!("[INFO] Item added to list");
+                    tracing::info!("Item added to list");
                     (::axum::http::StatusCode::OK, ::axum::Json(::serde_json::json!({"msg": "Added item"}))).into_response()
                 } else {
-                    println!("[WARN] Item not added to list");
+                    tracing::warn!("Item not added to list");
                     (
                         ::axum::http::StatusCode::BAD_REQUEST,
                         ::axum::Json(::serde_json::json!({"msg": "Error adding item"})),
@@ -115,7 +115,7 @@ macro_rules! make_list {
                 {
                     Some(a) => a,
                     None => {
-                        println!("[WARN] Could not find field 'old' in payload");
+                        tracing::warn!("Could not find field 'old' in payload");
                         return (
                             ::axum::http::StatusCode::BAD_REQUEST,
                             ::axum::Json(::serde_json::json!({"msg": "Missing field 'old'"})),
@@ -124,10 +124,10 @@ macro_rules! make_list {
                     }
                 };
                 if state.$list.remove(&old).await {
-                    println!("[INFO] Item removed from list");
+                    tracing::info!("Item removed from list");
                     (::axum::http::StatusCode::OK, ::axum::Json(::serde_json::json!({"msg": "Removed item"}))).into_response()
                 } else {
-                    println!("[WARN] Item not removed from list");
+                    tracing::warn!("Item not removed from list");
                     (
                         ::axum::http::StatusCode::BAD_REQUEST,
                         ::axum::Json(::serde_json::json!({"msg": "Error removing item"})),

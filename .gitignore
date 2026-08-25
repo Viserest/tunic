@@ -1,9 +1,7 @@
 
-# Cargo files
 Cargo.lock
 target/
-
-# Project files
+.zed/
 .env
 app.db
 files/
