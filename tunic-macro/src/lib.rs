@@ -3,11 +3,165 @@ use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    Data, DataStruct, DeriveInput, Error, Expr, Fields, Ident, LitStr, Path, Token, Type,
+    Attribute, Data, DataStruct, DeriveInput, Error, Expr, Fields, Ident, LitStr, Path, Token,
+    Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
 };
+
+#[proc_macro_derive(TableValueCrud, attributes(tunic))]
+pub fn derive_table_value_crud(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    let struct_name = input.ident.clone();
+    let fields = match input.data {
+        Data::Struct(data) => match data.fields {
+            Fields::Named(fields) => fields.named,
+            _ => panic!("TableValueCrud can only be derived for structs with named fields"),
+        },
+        _ => panic!("TableValueCrud can only be derived for structs"),
+    };
+
+    let mut id_field: Option<(Ident, Type)> = None;
+    let mut create_fields = Vec::new();
+    let mut update_fields = Vec::new();
+    let mut delete_field: Option<(Ident, Type)> = None;
+
+    for field in fields {
+        let field_name = field
+            .ident
+            .clone()
+            .expect("TableValueCrud fields must be named");
+        let field_type = field.ty.clone();
+        let markers = place_markers(&field.attrs);
+        for marker in markers {
+            match marker.to_string().as_str() {
+                "id" => {
+                    id_field = Some((field_name.clone(), field_type.clone()));
+                }
+                "create" => {
+                    create_fields.push((field_name.clone(), field_type.clone()));
+                }
+                "update" => {
+                    update_fields.push((field_name.clone(), field_type.clone()));
+                }
+                "delete" => {
+                    delete_field = Some((field_name.clone(), field_type.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    let (id_name, id_type) = id_field.expect("missing #[tunic(id)] field");
+
+    let create_payload = format_ident!("CreatePayload");
+    let update_payload = format_ident!("UpdatePayload");
+
+    let create_struct_fields = create_fields.iter().map(|(name, ty)| {
+        quote! {
+            pub #name: #ty
+        }
+    });
+
+    let create_constructor_args = create_fields.iter().map(|(name, _)| {
+        quote! {
+            self.#name
+        }
+    });
+
+    let update_struct_fields = update_fields.iter().map(|(name, ty)| {
+        quote! {
+            pub #name: #ty
+        }
+    });
+
+    let update_assignments = update_fields.iter().map(|(name, _)| {
+        quote! {
+            target.#name = self.#name.clone();
+        }
+    });
+
+    let delete_impl = if let Some((delete_name, _delete_type)) = delete_field {
+        quote! {
+            self.#delete_name = crate::unix_now();
+            true
+        }
+    } else {
+        quote! {
+            false
+        }
+    };
+
+    let expanded = quote! {
+        #[derive(Deserialize)]
+        pub struct #create_payload {
+            #( #create_struct_fields, )*
+        }
+
+        impl ::core::convert::Into<#struct_name> for #create_payload {
+            fn into(self) -> #struct_name {
+                #struct_name::new(
+                    #( #create_constructor_args, )*
+                )
+            }
+        }
+
+        #[derive(Deserialize)]
+        pub struct #update_payload {
+            #id_name: #id_type,
+            #( #update_struct_fields, )*
+        }
+
+        impl TableGetKey<#id_type> for #update_payload {
+            fn get_key(&self) -> #id_type {
+                self.#id_name
+            }
+        }
+
+        impl TableValueUpdate<#struct_name> for #update_payload {
+            fn update(&self, target: &mut #struct_name) {
+                #( #update_assignments )*
+            }
+        }
+
+        impl TableGetKey<#id_type> for #struct_name {
+            fn get_key(&self) -> #id_type {
+                self.#id_name
+            }
+        }
+
+        impl TableValueDeleted for #struct_name {
+            fn set_deleted(&mut self) -> bool {
+                #delete_impl
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn place_markers(attrs: &[Attribute]) -> Vec<Ident> {
+    let mut result = Vec::new();
+
+    for attr in attrs {
+        if !attr.path().is_ident("tunic") {
+            continue;
+        }
+
+        let parsed = attr.parse_args_with(Punctuated::<Ident, Token![,]>::parse_terminated);
+
+        match parsed {
+            Ok(markers) => {
+                result.extend(markers);
+            }
+            Err(error) => {
+                panic!("invalid #[tunic(...)] attribute: {error}");
+            }
+        }
+    }
+
+    result
+}
 
 // Helper struct to parse `#[make_user(namespace = "UUID")]`
 struct MakeUserArgs {
@@ -195,345 +349,6 @@ pub fn make_user(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn set_password(&mut self, #password_ident: impl Into<String>) {
                 self.#password_ident = #rt_path::user::password_hash(#password_ident);
             }
-        }
-    };
-
-    TokenStream::from(expanded)
-}
-
-// Macro argument parsing
-struct MacroArgs {
-    state: Path,
-    table: Expr,
-    methods: Vec<Ident>,
-    delete_type: Ident,
-}
-
-impl Parse for MacroArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut state: Option<Path> = None;
-        let mut table: Option<Expr> = None;
-        let mut methods = vec![
-            format_ident!("post"),
-            format_ident!("get"),
-            format_ident!("put"),
-            format_ident!("delete"),
-        ];
-
-        // Fake: Doesn't delete from table but only sets deleted_at to current time
-        // Real: Deletes from table
-        let mut delete_type = Ident::new("fake", proc_macro2::Span::call_site());
-
-        // Parse arbitrary order key-value pairs separated by commas or semicolons
-        while !input.is_empty() {
-            let key: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
-
-            if key == "state" {
-                state = Some(input.parse()?);
-            } else if key == "table" {
-                table = Some(input.parse()?);
-            } else if key == "methods" {
-                let content;
-                syn::bracketed!(content in input);
-                let parsed_methods: Punctuated<Ident, Token![,]> =
-                    content.parse_terminated(Ident::parse, Token![,])?;
-                methods = parsed_methods.into_iter().collect();
-            } else if key == "delete_type" {
-                delete_type = input.parse()?;
-            } else {
-                return Err(syn::Error::new(
-                    key.span(),
-                    format!("Unknown macro argument: {}", key),
-                ));
-            }
-
-            // Consume optional trailing comma or semicolon between arguments (if not at the end)
-            if input.peek(Token![,]) {
-                let _ = input.parse::<Token![,]>();
-            } else if input.peek(Token![;]) {
-                let _ = input.parse::<Token![;]>();
-            }
-        }
-
-        Ok(MacroArgs {
-            state: state.expect("State argument is required"),
-            table: table.expect("Table argument is required"),
-            methods,
-            delete_type,
-        })
-    }
-}
-
-#[proc_macro_attribute]
-pub fn make_crud(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as MacroArgs);
-    let mut input = parse_macro_input!(item as DeriveInput);
-
-    let struct_name = &input.ident;
-    let vis = &input.vis;
-
-    let lib_name = crate_name("tunic").expect("tunic is present in your Cargo.toml");
-    let rt_path = match lib_name {
-        FoundCrate::Itself => {
-            quote! { crate }
-        }
-        FoundCrate::Name(name) => {
-            let ident = Ident::new(&name, Span::call_site());
-            quote! { #ident }
-        }
-    };
-
-    let fields = match &mut input.data {
-        Data::Struct(DataStruct {
-            fields: Fields::Named(fields),
-            ..
-        }) => &mut fields.named,
-        _ => {
-            return Error::new_spanned(
-                struct_name,
-                "#[make_user] can only be applied to structs with named fields",
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-
-    // Filter fields for payloads
-    let mut post_fields = Vec::new();
-    let mut post_field_names = Vec::new();
-    let mut not_post_field_names = Vec::new();
-    let mut get_fields = Vec::new();
-    let mut put_fields = Vec::new();
-    let mut put_field_updates = Vec::new();
-
-    for field in fields.iter_mut() {
-        let field_name = field.ident.as_ref().unwrap();
-        let field_type = &field.ty;
-
-        let mut skipped = Vec::new();
-        for attr in field.attrs.drain(..) {
-            if attr.path().is_ident("skip") {
-                let _ = attr.parse_nested_meta(|meta| {
-                    if let Some(ident) = meta.path.get_ident() {
-                        skipped.push(ident.clone());
-                    }
-                    Ok(())
-                });
-            }
-        }
-
-        let skip_post = skipped.iter().any(|m| m == "post");
-        let skip_get = skipped.iter().any(|m| m == "get");
-        let skip_put = skipped.iter().any(|m| m == "put");
-
-        if field_name == "id" && !skip_put {
-            put_fields.push(quote! { #field_name: #field_type });
-        } else {
-            if skip_post {
-                not_post_field_names.push(quote! { #field_name });
-            } else {
-                post_fields.push(quote! { #field_name: #field_type });
-                post_field_names.push(quote! { #field_name });
-            }
-            if !skip_put {
-                if let Type::Path(type_path) = field_type {
-                    if let Some(segment) = type_path.path.segments.last() {
-                        if segment.ident == "Option" {
-                            put_fields.push(quote! { #field_name: #field_type });
-                            put_field_updates
-                                .push(quote! { value.#field_name = payload.#field_name });
-                        } else {
-                            put_fields.push(quote! { #field_name: Option<#field_type> });
-                            put_field_updates
-                                .push(quote! { value.#field_name = payload.#field_name.unwrap() });
-                        }
-                    }
-                }
-            }
-        }
-
-        if !skip_get {
-            get_fields.push(quote! { #field_name: #field_type });
-        }
-    }
-
-    // Generate Handlers based on methods enabled
-    let mut struct_tokens = Vec::new();
-    let mut handler_tokens = Vec::new();
-    let state_type = &args.state;
-    let table = &args.table;
-
-    for method in &args.methods {
-        if method == "post" {
-            let post_payload_name = format_ident!("PostPayload{}", struct_name);
-            struct_tokens.push(quote! {
-                #[derive(serde::Deserialize)]
-                #vis struct #post_payload_name {
-                    #(#post_fields),*
-                }
-            });
-            handler_tokens.push(quote! {
-                pub async fn handle_post(
-                    ::axum::Extension(state): ::axum::Extension<#state_type>,
-                    ::axum::Json(payload): ::axum::Json<#post_payload_name>,
-                ) -> impl ::axum::response::IntoResponse {
-                    let value = #struct_name {
-                        id: ::uuid::Uuid::new_v4(),
-                        #(#post_field_names: payload.#post_field_names,)*
-                        #(#not_post_field_names: ::std::default::Default::default(),)*
-                    };
-                    if (#table).insert(value.id, value).await.is_some() {
-                        tracing::warn!("Entry overwrote a key.");
-                    }
-
-                    (
-                        ::axum::http::StatusCode::OK,
-                        ::axum::Json(::serde_json::json!({"msg": "Created."})),
-                    )
-                }
-            });
-        } else if method == "get" {
-            let get_payload_name = format_ident!("GetPayload{}", struct_name);
-            struct_tokens.push(quote! {
-                #[derive(serde::Serialize)]
-                #vis struct #get_payload_name {
-                    #(#get_fields),*
-                }
-            });
-            handler_tokens.push(quote! {
-                pub async fn handle_get(
-                    ::axum::Extension(state): ::axum::Extension<#state_type>,
-                    ::axum::extract::Query(params): ::axum::extract::Query<::std::collections::HashMap<String, String>>,
-                ) -> impl ::axum::response::IntoResponse {
-                    // Get optional fields
-                    let limit = params
-                        .get("limit")
-                        .and_then(|f| f.parse::<usize>().ok())
-                        .unwrap_or(20)
-                        .clamp(1, 100);
-                    let offset = params
-                        .get("offset")
-                        .and_then(|f| f.parse::<usize>().ok())
-                        .unwrap_or(0);
-
-                    let mut result = Vec::new();
-                    for (_, f) in (#table).iter().await.skip(offset).take(limit) {
-                        result.push(::serde_json::json!(*f.lock().await));
-                    }
-
-                    (
-                        ::axum::http::StatusCode::OK,
-                        ::axum::Json(::serde_json::json!({
-                            "msg": "Found items.",
-                            "length": result.len(),
-                            "limit": limit,
-                            "offset": offset,
-                            "list": result,
-                        })),
-                    )
-                }
-            });
-        } else if method == "put" {
-            let put_payload_name = format_ident!("PutPayload{}", struct_name);
-            struct_tokens.push(quote! {
-                #[derive(serde::Deserialize)]
-                #vis struct #put_payload_name {
-                    #(#put_fields),*
-                }
-            });
-            handler_tokens.push(quote! {
-                pub async fn handle_put(
-                    ::axum::Extension(state): ::axum::Extension<#state_type>,
-                    ::axum::Json(payload): ::axum::Json<#put_payload_name>,
-                ) -> impl ::axum::response::IntoResponse {
-                    let value = match (#table).get_mut(&payload.id).await {
-                        Some(a) => a,
-                        None => {
-                            tracing::warn!("Table put ran and errored: table returned none.");
-                            return (
-                                ::axum::http::StatusCode::BAD_REQUEST,
-                                ::axum::Json(::serde_json::json!({"msg": "Missing 'id' field"})),
-                            );
-                        }
-                    };
-                    let mut value = value.lock().await;
-
-                    // If field is optional vs not
-                    #(#put_field_updates;)*
-
-                    tracing::info!("Table put ran");
-                    (
-                        ::axum::http::StatusCode::OK,
-                        ::axum::Json(::serde_json::json!({"msg": "Updated whatever"})),
-                    )
-                }
-            });
-        } else if method == "delete" {
-            let delete_tokens = match args.delete_type.to_string().as_str() {
-                "fake" => quote! {
-                    let value = match (#table).get_mut(&id).await {
-                        Some(a) => a,
-                        None => {
-                            tracing::warn!("Table delete ran and errored: table returned none.");
-                            return (
-                                ::axum::http::StatusCode::BAD_REQUEST,
-                                ::axum::Json(::serde_json::json!({"msg": "Returned nothing"})),
-                            );
-                        }
-                    };
-                    let mut value = value.lock().await;
-                    value.deleted_at = #rt_path::unix_now();
-                },
-                _ => quote! {
-                    if (#table).remove(&id).await.is_none() {
-                        tracing::warn!("Table delete ran and errored: table returned none.");
-                        return (
-                            ::axum::http::StatusCode::BAD_REQUEST,
-                            ::axum::Json(::serde_json::json!({"msg": "Returned nothing"})),
-                        );
-                    }
-                },
-            };
-            handler_tokens.push(quote! {
-                pub async fn handle_delete(
-                    ::axum::Extension(state): ::axum::Extension<#state_type>,
-                    ::axum::Json(payload): ::axum::Json<::serde_json::Value>,
-                ) -> impl ::axum::response::IntoResponse {
-                    let id = match payload
-                        .get("id")
-                        .and_then(|f| f.as_str())
-                        .and_then(|f| f.parse::<::uuid::Uuid>().ok())
-                    {
-                        Some(a) => a,
-                        None => {
-                            tracing::warn!("Table delete ran and errored: id not found in payload.");
-                            return (
-                                ::axum::http::StatusCode::BAD_REQUEST,
-                                ::axum::Json(::serde_json::json!({"msg": "Missing 'id' field"})),
-                            );
-                        }
-                    };
-
-                    #delete_tokens
-
-                    tracing::info!("Table delete ran");
-                    return (
-                        ::axum::http::StatusCode::OK,
-                        ::axum::Json(::serde_json::json!({"msg": "Successfully removed"})),
-                    );
-                }
-            });
-        }
-    }
-
-    let expanded = quote! {
-        #input
-
-        #(#struct_tokens)*
-
-        impl #struct_name {
-            #(#handler_tokens)*
         }
     };
 

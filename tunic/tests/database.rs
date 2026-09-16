@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tunic::{StateTrait, Table};
+use tunic::Table;
 use uuid::Uuid;
 
 #[derive(Deserialize, Serialize)]
@@ -18,10 +18,10 @@ struct State {
     circles: Table<Uuid, Circle>,
     squares: Table<Uuid, Square>,
 }
-impl StateTrait for State {}
 
 fn main() {
-    let state = State::default();
+    let state = tunic::State::default();
+    let config = tunic::Config::default();
 
-    tunic::Serve::new().run(state);
+    tunic::Serve::new(state, config).run();
 }
