@@ -3,8 +3,7 @@ use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Data, DataStruct, DeriveInput, Error, Expr, Fields, Ident, LitStr, Path, Token,
-    Type,
+    Attribute, Data, DataStruct, DeriveInput, Error, Fields, Ident, LitStr, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,

@@ -1,6 +1,3 @@
 [workspace]
 resolver = "3"
-members = [
-    "tunic",
-    "tunic-macro"
-]
+members = ["crates/*", "apps/*"]

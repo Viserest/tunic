@@ -1,48 +1,80 @@
-
 # Tunic
-## Compile Time Features
-All features can be used at once.
+## Nested Crates
+### Crate Dependency Tree
+- tunic-core
+- tunic-database
+- tunic-element
+- tunic-router
+- tunic-scheduler
+    Requirement:
+    - tunic-database
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+- tunic-user
+    Requirement:
+    - tunic-database
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+- tunic-message
+    Requirement:
+    - tunic-user
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+    Optional on feature message-connections:
+    - tunic-xmpp
+    - tunic-signal
+    - tunic-simplex
+- tunic-calendar
+    Requirement:
+    - tunic-user
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+- tunic-food
+    Requirement:
+    - tunic-user
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+- tunic-filesystem
+    Requirement:
+    - tunic-user
+    Optional on feature web-client or api-crud:
+    - tunic-router
+    - tunic-element
+- tunic-macro
 
-### Manual
-A manual setup would make base module functions public to allow your program to set them up. 
-An automatic setup (default) would inject routes into your axum router.
+### Crate Features
+* Application and cache may be combined
+application: 
+    Runs application which runs in-memory or connects to database
+cache: 
+    Runs application-database cacheing which stores short-term data
+database:
+    Runs database which stores long-term data on filesystem.
+    A network port is opened to support database connections. Serialized data is transmitted over this interface.
+    Supports storing data in memory, on the filesystem, or on a separate database server.
+    TODO: Connect to sql-based server and handle automatic sql querys
+web-client: 
+    Adds a router which serves http webpages
+    Requires: application
+api-crud: 
+    Adds a router which serves http apis
+    Requires: application
+message-connections: 
+    Reads config options for handling extra message protocols
+p2p-connections: 
+    Reads config options for handling p2p protocols
 
-### Apps
-Includes: http, database, storage, media, message, and p2p, along with their own config.
-
+### Crate Config
 If feature is added, a configuration must be provided. Configuration is found through environment variables, tunic.toml, and command-line arguments. When the same option is specified in multiple sources, the higher-priority source takes precedence: command-line arguments over tunic.toml, and tunic.toml over environment variables.
 
-### Database
-This feature adds:
-1. **Network connectivity:** Opens a network port to support database-to-database and application-to-database connections. Serialized data is transmitted over this interface.
-2. **Flexible data storage:** Supports storing data in memory, on the filesystem, or on a separate database server.
-
-
-## Standard stuff
-Timestamps:
-```rust
-created_at: u64,
-accessd_at: u64,
-updated_at: u64,
-deleted_at: u64,
-```
-
-
-## Axum router uses
-setup     serve
-setup     routing on path/method
-extract   Path
-extract   Query
-extract   Json
-extension State
-response  Json
-response  StatusCode
-response  Headers
-response  Vec<u8>
-response  String
-
-## Host router uses
-setup     routing on host header
+## Proc Macros
+TODO: Create index field (field is list of ids, which map to other table) using a proc macro
+TODO: Create joint table (field is list of ids, which map to table which is created by other proc macro) using a proc macro
 
 
 ## Todo
@@ -53,9 +85,6 @@ WMLC (Without Modifing the Library Code)
 - WMLC, add scopes to main Scope
 - FIX, config can change to a different http or database location (custom name: public, secret, admin, etc). Right now all routers are nested onto a root router only
 - FIX, move clrud handlers to table and list implementations. Those implementations call functions which are implemented on structs
-- ADD, scope requirement for features
-- ADD, create index (field being a list of ids, which map to other table) using a proc macro
-- ADD, create joint table (field being a list of ids, which map to table which is created by other proc macro) using a proc macro
 - ADD, LDAP server
 - ADD, file transfer in any protocol (TCP, ssh, rsync, google's way, amazon's way, etc)
 - ADD, communication in any sql flavor
