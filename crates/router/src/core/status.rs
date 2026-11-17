@@ -100,13 +100,13 @@ mod status_kind {
     }
 
     helper! {
-        Success, crate::http::StatusCode::Ok, crate::gemini::StatusCode::Success;
-        RedirectTemporary, crate::http::StatusCode::RedirectTemporary, crate::gemini::StatusCode::RedirectTemporary;
-        RedirectPermanent, crate::http::StatusCode::RedirectPermanent, crate::gemini::StatusCode::RedirectPermanent;
-        BadRequest, crate::http::StatusCode::BadRequest, crate::gemini::StatusCode::BadRequest;
-        NotFound, crate::http::StatusCode::NotFound, crate::gemini::StatusCode::NotFound;
-        Gone, crate::http::StatusCode::Gone, crate::gemini::StatusCode::Gone;
-        Failure, crate::http::StatusCode::InternalServerError, crate::gemini::StatusCode::FailurePermanent;
+        Success,           crate::http::StatusCode::Ok,                  crate::gemini::StatusCode::Success;
+        RedirectTemporary, crate::http::StatusCode::RedirectTemporary,   crate::gemini::StatusCode::RedirectTemporary;
+        RedirectPermanent, crate::http::StatusCode::RedirectPermanent,   crate::gemini::StatusCode::RedirectPermanent;
+        BadRequest,        crate::http::StatusCode::BadRequest,          crate::gemini::StatusCode::BadRequest;
+        NotFound,          crate::http::StatusCode::NotFound,            crate::gemini::StatusCode::NotFound;
+        Gone,              crate::http::StatusCode::Gone,                crate::gemini::StatusCode::Gone;
+        Failure,           crate::http::StatusCode::InternalServerError, crate::gemini::StatusCode::FailurePermanent;
     }
 }
 

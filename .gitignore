@@ -1,7 +1,1 @@
-
-Cargo.lock
 target/
-.zed/
-.env
-app.db
-files/

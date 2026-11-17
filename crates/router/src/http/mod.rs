@@ -177,4 +177,3 @@ pub use extensions::*;
 pub use headers::*;
 pub use status::*;
 pub use version::*;
-pub use version::*;
