@@ -1,6 +1,12 @@
 [package]
 name = "user"
-version = "0.1.0"
-edition = "2024"
+description = "User accounts and sessions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+utils = { path = "../utils" }
+router = { path = "../router" }
+database = { path = "../database" }
+element = { path = "../element" }

@@ -1,7 +1,13 @@
 [package]
+name = "tunic-app"
+description = "The tunic executable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
 name = "tunic"
-version = "0.1.0"
-edition = "2024"
+path = "src/main.rs"
 
 [dependencies]
 tunic = { path = "../../crates/tunic" }

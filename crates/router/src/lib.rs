@@ -1,45 +1,40 @@
 //! # Tunic router
 //!
-//! Tunic router for Http, Gopher, and Gemini
+//! One router for **HTTP/1.x**, **Gopher** and **Gemini**.
 //!
 //! ## Concept
-//! 1. The initial request can be of any type. It's mapped to a [`Request`](crate::Request) and stores the protocol.
-//! 2. The [`Request`](crate::Request) transverses the [`Router`](crate::Router) until it matches a [`Route`](crate::Route).
-//! 3. The [`Route`](crate::Route) calls the callback function which returns a [`Response`](crate::Response).
-//! 4. The [`Response`](crate::Response) is converted into it's initial protocol's response.
-//! 5. The response is sent asynchronisly.
+//! 1. A listener accepts a connection; the protocol codec maps the bytes to a [`Request`] that
+//!    remembers its [`Protocol`].
+//! 2. The [`Router`] matches the request (host, method, path pattern) and checks the route's *tag*
+//!    against the [`Policy`] (is the tag enabled, is the client address allowed).
+//! 3. The route's handler returns a [`Response`].
+//! 4. The codec converts the response back into the protocol's wire format.
 //!
-//! ## Request mapping
-//! * Additional mappings need to be easy to implement
-//!
-//! ### Http request
-//! Transfers: the Version, URI, Method, Headers, Extension, and Body (as Vec<u8>)
-//!
-//! ### Gopher request
-//! Transfers only the Selector. Method is always GET.
-//!
-//! ### Gemini request
-//! Transfers only the URL. Method is always GET.
+//! Handlers can answer every protocol with the same code: [`Response::page`] renders an
+//! [`element::Page`] as html, gemtext or plain text depending on `req.protocol`.
 //!
 //! ## Ports
-//! - Http defaults to 80
-//! - Gopher defaults to 70
-//! - Gemini defaults to 1965
+//! Http defaults to 80, Gopher to 70, Gemini to 1965 (the application chooses the real ports).
+//!
+//! ## Scope of this build
+//! The router is built on `std` only. HTTP/1.0/1.1 (keep-alive, chunked request bodies),
+//! Gopher and Gemini are implemented. Gemini mandates TLS: plug a TLS implementation in through
+//! the [`Acceptor`] trait (or terminate TLS in front, e.g. stunnel/haproxy). HTTP/2 and HTTP/3
+//! need a TLS stack and QUIC and are likewise meant to be added as extra codecs behind
+//! [`Acceptor`]/[`Protocol`].
 
-// Macros
-#[macro_use]
-mod macros;
-
-// Core
+mod client;
 mod core;
-mod router;
-mod serve;
-
-pub use core::*;
-pub use router::*;
-pub use serve::*;
-
-// Protocols
 mod gemini;
 mod gopher;
 mod http;
+mod proxy;
+mod route;
+mod server;
+
+pub use client::{ClientResponse, request as http_request};
+pub use core::*;
+pub use gopher::{GopherItem, menu as gopher_menu};
+pub use proxy::proxy_handler;
+pub use route::*;
+pub use server::*;

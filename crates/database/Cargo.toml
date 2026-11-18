@@ -1,6 +1,11 @@
 [package]
 name = "database"
-version = "0.1.0"
-edition = "2024"
+description = "Scoped storage built from Rust structs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+utils = { path = "../utils" }
+router = { path = "../router" }
+proc_macros = { path = "../proc_macros" }

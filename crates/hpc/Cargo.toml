@@ -1,0 +1,13 @@
+[package]
+name = "hpc"
+description = "High-performance computing scheduler and workers over the p2p mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+utils = { path = "../utils" }
+router = { path = "../router" }
+database = { path = "../database" }
+p2p = { path = "../p2p" }
+element = { path = "../element" }

@@ -1,209 +1,176 @@
-
 # Tunic
+
+One executable, many optional parts, all of them nodes of a distributed mesh. Use it as a binary
+(`apps/tunic`) configured by command line, `tunic.toml` or environment variables, or as a Rust
+library where you add your own routes, tables, features and database scopes.
+
+"Feature" in this project means a switchable part of the application (drive, calendar, hpc.worker, ...).
+It has nothing to do with cargo features.
+
+```
+cargo build --release -p tunic-app        # target/release/tunic
+tunic --help                              # every setting, its default and its env name
+tunic --list-features
+tunic                                     # http on :8080 with the default features, data in ./data
+```
+
+On first start an administrator is created (`user.admin-name`, default `admin`). If
+`user.admin-password` / `TUNIC_USER_ADMIN_PASSWORD` is not set, a password is generated and printed once.
 
 ## Features
 
-Application (Router):
-- User
-- Drive
-- Calendar
-- Food
-- Intelligence
-- Messages (Client)
-- P2P (Dashboard)
+| Feature | Default | What it does |
+|---|---|---|
+| `user` | on | accounts, login sessions (cookie `session_id` or Bearer), PBKDF2-HMAC-SHA256 hashes, lockout after repeated failures, admin user management |
+| `drive` | on | files on disk + metadata in the database; owners, folders, sharing (commenter < viewer < editor < owner, inherited down folders), quota, media playlists; downloads are sandboxed (`nosniff`, CSP sandbox, html/svg never inline) |
+| `calendar` | on | events and contacts per user, range queries, iCalendar (`.ics`) export |
+| `food` | on | ingredients, meals, daily intake, workouts, daily summary |
+| `intelligence` | on | non-LLM maths: evaluate, differentiate (symbolic), integrate, limits |
+| `messages` | on | group chat; `POST /message/ingest/:source` (bearer token) for bridges; line-based TCP relay for bots; `Bridge` trait for outgoing delivery |
+| `hpc.scheduler` | off | job/batch queue with leases, retries and reduce (sum/min/max/concat), dashboard and job API (admin only) |
+| `hpc.worker` | off | pulls jobs from a scheduler over the mesh; runs on nodes **without** an open port |
 
-Database: 
-  Runs database which stores long-term data on filesystem.
-  A network port is opened to support database connections. Serialized data is transmitted over this interface.
-  Supports storing data in memory, on the filesystem, or on a separate database server.
-  Connections can be made using other protocols (SQL, FTP, etc)
+Besides features every executable has three core parts:
 
-Connections:
-- Messages (Relay, Intercept)
-- P2P (Relay, Router)
+* **router** (`router.*`): Http/1.x, Gopher and Gemini on any port, route *tags* (`public`, `admin`, `internal`)
+  with per-tag network access rules, virtual hosts and a reverse proxy.
+* **database** (`database.*`): scoped storage (memory, filesystem, or a remote database server), optionally
+  *served* to other nodes over TCP, with scope-limited tokens.
+* **p2p** (`p2p.*`): the mesh. Every node has an **optional** port. At least one node of a mesh has a port;
+  every other node needs `--join <address of any node>`. Nodes gossip peers and roles and call each other's services.
 
-All features can be enabled. Any distributed schema is possible.
+## Configuration
 
-Examples:
+Sources, lowest to highest priority: defaults → environment (`TUNIC_ROUTER_PROTOCOLS_HTTP`, `.` and `-` become `_`)
+→ `tunic.toml` (`--config file`, `TUNIC_CONFIG`, or `./tunic.toml`) → command line. Unknown keys and wrong types
+are errors, not silently ignored. `tunic --print-config` shows the result (secrets hidden).
 
-Multiple applications, one database:
-```
-Server 1: Reverse proxy, Application 1 (Admin dashboard frontend/apis)
-Server 2: Application 2 (Public frontend)
-Server 3: Application 3 (Public apis)
-Server 4: Application 4 (Public apis)
-Server 5: Database
-Server 6: Static content? // This is the only reason reverse proxy is used. 
-                          // All other servers send content through the communication port.
-```
+Command line: `--router.protocols.http 9000`, `--enable drive`, `--disable food`, `--join host:7000` (repeatable),
+`--router.reverse-proxy.example.com localhost:2455`, `--set key=value`, `--print-config`, `--list-features`.
 
-One application, High-performance computing cluster, Multiple databases:
-```
-Server 1: Application 1 (Schedular dashboard)
-Server 2: HPC 1
-Server 3: HPC 2
-Server 4: HPC 3
-Server 5: Database 1
-Server 6: Database 2
-```
+See [`examples/tunic.example.toml`](examples/tunic.example.toml) for a commented file:
 
-Note: All executeables have an optional port opened for communication between the nodes, but when 
-run they have to have at least one node to initial with. To add Server 7, it has to include 
-an argument to look at any Server 1-6.
-
-### Feature config
-
-Configuration is found through environment variables, tunic.toml, and command-line arguments. 
-When the same option is specified in multiple sources, the higher-priority source takes
-precedence: command-line arguments over tunic.toml, and tunic.toml over environment variables.
-
-Example:
 ```toml
-# Web router is enabled
 [router]
 enabled = true
 
-# Web router protocols which are enabled and their ports
-[router.protocols]
-gopher = 70
+[router.protocols]       # true = default port, false = off, number = that port
 http = 80
-https = 443
-gemini = 1965
+gopher = 70
 
-# All router tags are enabled
 [router.tags]
 all = true
 
-# Router tag "public" is accessible from all ip addresses from any protocol
-# Router tag "admin" is accessible from "10.1.0.0 - 10.1.255.255" from any protocol
-[router.access]
+[router.access]          # tag "public" from everywhere, tag "admin" only from 10.1.0.0 - 10.1.255.255
 public = "0.0.0.0"
 admin = "10.1.0.0/16"
 
-# Reverse proxy works like caddy or nginx
 [router.reverse-proxy]
 "example.com" = "localhost:2455"
-"illustration.com" = "localhost:2456"
 
-# Database is enabled and accessible from port 54000. Since Web Router is also 
-# enabled this running binary doesnt connect back to itself on port 54000.
 [database]
-enabled = true
+enabled = true           # serve this node's data on port 54000
 port = 54000
+token = "change-me"      # required when binding to anything but 127.0.0.1
 ```
 
-## Functionality
+Safe defaults: `admin`/`internal` routes only answer on loopback until `router.access.admin` says otherwise; the
+database server binds to 127.0.0.1 and refuses to listen publicly without a token.
 
-### Core
+### Database modes
 
-#### Element
+`database.mode = memory | fs | remote` (default `fs`, in `<data.dir>/db`). `remote` needs `database.connect`
+(and `database.token`). `database.route` sends scope prefixes to other servers (`hpc = "TOKEN@server6:54000"`),
+so one node can use several databases at once. Because this node's features use their own database directly, a node
+that also serves its database does not connect back to itself.
 
-Building blocks of a page for any device (phone, desktop, web).
+## Distributed layouts
 
-Elements:
-- Section (html div)
-- Table (html table)
-- Code (html code)
-- Text (html paragraph)
-- Link (html anchor)
+* [`examples/multi-app-one-database.md`](examples/multi-app-one-database.md): several applications and one database server.
+* [`examples/hpc-cluster.md`](examples/hpc-cluster.md): a scheduler dashboard, workers and two databases. Workers are
+  pull-based, so they need no open port; adding another worker is `tunic --enable hpc.worker --join <any node>`.
 
-Styles:
-- Width is sectioned into 12-columns with margins between.
+The HPC layer was verified end to end both in-process (three passive worker nodes counting primes below 2,000,000,
+= 148933) and as separate release-binary processes.
 
-#### Router
-
-Routing a request to a page over any protocol.
-
-Protocols:
-- Gopher
-- HTTP (v1, v2, v3)
-- Gemini
-- Custom binary
-- TLS (initially where needed)
-
-#### Database
-
-Storage that handles ACID or BASE, SQL or noSQL, etc. Everything is built as Rust structs, then proc macros handle complex schemas.
-
-Example: 
-A music metadata storage, artist stores a list of albums, albums stores a list of songs.
+## As a library
 
 ```rust
-struct Artist {
-    id: Uuid,
-    albums: Table<Album>,
-    name: String;
-}
-struct Album {
-    id: Uuid,
-    songs: Table<Song>,
-    name: String;
-}
-struct Song {
-    id: Uuid,
-    title: String,
-}
+use tunic::{App, Value};
+use tunic::database::{Record, Uuid};
+use tunic::router::{Request, Response, Router};
 
-let suffocate = Song::new(artist_id, album_id, "Suffocate");
-suffocate.artist().name = "Crossfade"; // Generates this function
-suffocate.album().name = "We All Bleed"; // Generates this function
-suffocate.title = "Suffocate";
+#[derive(Clone, Debug, PartialEq, Record)]
+struct Note { id: Uuid, owner: Uuid, text: String }
+impl tunic::user::Owned for Note { fn owner(&self) -> Uuid { self.owner } }
+
+fn main() {
+    let running = App::new()                                   // all built-in features
+        .disable("food")                                       // change what is enabled
+        .users("my-app/accounts")                              // scope that holds accounts
+        .files("my-app/files")                                 // scope that holds file metadata
+        .table::<Note>("my-app/notes", "/notes")               // your own per-user table + CRUD routes
+        .router(Router::new()                                  // your own routes (served before built-ins)
+            .get("/ping", |_: &Request| Response::text("pong"))
+            .tagged("public"))
+        .on_start("hello", |ctx| {                             // or a whole feature
+            let db = ctx.scope("my-app/hello")?;               // a scope is always required
+            ctx.link("Hello", "/hello");
+            let _ = db;
+            Ok(())
+        })
+        .default_value("router.protocols.http", Value::Int(9000))
+        .start()
+        .unwrap();
+    running.wait();
+}
 ```
 
-Rust generates:
-1. Song:   Method to lookup album or artist.
-2. Album:  Method to lookup songs or artist.
-2. Artist: Method to lookup songs or albums.
+This example is built from `crates/tunic/examples/library.rs`.
 
-Protocols:
-1. Custom binary format
-2. Any sql flavor
-3. Any file transfer protocol (TCP, ssh, rsync, google's way, amazon's way, etc)
+* The root `Database` has **no** data access: `db.scope("a/b")` is required for every read and write, and remote
+  tokens can be limited to a scope.
+* Implement `tunic::Feature` for reusable features: name (= config section), options, `requires()`, `start(ctx)`.
+  `App::empty()` starts with none.
+* `App::database(db)` supplies your own database, `App::tasks(registry)` your own HPC job kinds,
+  `App::acceptor("https" | "gemini", acceptor)` a TLS implementation.
+* `Running::get::<Users>()` etc. return the services features published; `Running::addr("http")` returns bound addresses.
 
-### Addon
-
-#### User
-
-Users as social media profiles.
-
-Extra protocols:
-1. LDAP server
-
-#### Message
-
-Message Client: Webpage for viewing messages
-Message Relay: XMPP, etc
-Message Interception: Teams, Snapchat, Whatsapp, Signal, Simplex, etc
-
-#### Calendar
-
-#### Intelligence
-
-#### Food
-
-#### Drive
-
-## Project Tree
-
-This project can be used as a binary executable (apps/tunic) or as a rust library.
+## Crates
 
 ```
-apps/            .
-  tunic          Executable for running.
-crates/          .
-  ..CORE         .
-  utils          .
-  element        Building blocks of a page for any device (phone, desktop, web).
-  router         Routing a request to a page over any protocol.
-  database       Storage built using Rust structures.
-  proc_macros    .
-  ..FRONTEND     .
-  user           User accounts. Remake of Google Accounts, Microsoft Accounts, etc.
-  drive          Access files. Remake of Google Drive, or Microsoft OneDrive.
-  calendar       View calendar. Remake of Google Calendar, Apple Calendar, etc.
-  food           Track workouts and nutrition.
-  intelligence   AI not through an LLM.
-  ..EXTERNAL     .
-  messages       Message client page, relay, and interception.
-  p2p            Tor node, I2P router, etc.
+apps/tunic       Executable: tunic::cli::main_with(App::new())
+crates/utils     uuid, sha256/hmac, PBKDF2 passwords, json + toml-subset parser, network rules, shutdown
+crates/element   page building blocks (section, table, code, text, link), 12-column grid, html/gemtext/text output
+crates/router    Http/1.x, Gopher, Gemini; routing, tags, access policy, virtual hosts, reverse proxy
+crates/database  scoped storage, #[derive(Record)], tables, memory/fs/remote/routed backends, database server
+crates/proc_macros  derive(Record) (hand-written, no syn/quote)
+crates/user | drive | calendar | food | intelligence | messages
+crates/p2p       mesh node: optional port, join list, gossip, roles, services, dashboard
+crates/hpc       scheduler, worker, built-in tasks, dashboard/API
+crates/tunic     configuration, features, App builder, CLI
 ```
+
+## Not built (honest list)
+
+* **No TLS.** `https` and Gemini (which requires TLS) are implemented as protocol codecs behind an `Acceptor` trait;
+  starting them without an acceptor is an error that says so. Terminate TLS in front (a reverse proxy) or supply an acceptor.
+* **HTTP/2 and HTTP/3** are not implemented; only HTTP/1.x.
+* **P2P traffic is not encrypted**; it is plain TCP with an optional shared secret (`p2p.token`). Run it on a private
+  network or tunnel. There is no Tor node or I2P router.
+* **Messages**: no native XMPP, Signal, SimpleX, Teams, WhatsApp or Snapchat. What exists: the ingest endpoint, the
+  relay protocol and the `Bridge` trait, which are the places such bridges plug in.
+* **Database protocols**: only the custom binary protocol. No SQL, FTP, rsync, LDAP.
+* **Passwords** use PBKDF2-HMAC-SHA256, not argon2, because the project is built with the standard library only.
+* The README's `Artist/Album/Song` generated-lookups idea is not implemented; `#[derive(Record)]` gives typed
+  records and tables, with relations expressed as ids.
+* Everything is dependency-free (std only) because the build environment had no network access, so the original
+  async/tokio stack was not used. Servers are thread-per-connection with limits, not an async runtime.
+
+## Tests
+
+`cargo test --workspace` (155 tests): unit tests per crate, protocol tests over real sockets, a multi-node HPC
+cluster, remote and routed databases, and whole-app tests for config priority, feature switching, reverse proxy,
+access rules and library use.
+
+License: GPL-2.0-only (see LICENSE).

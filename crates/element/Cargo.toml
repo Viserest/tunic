@@ -1,6 +1,8 @@
 [package]
 name = "element"
-version = "0.1.0"
-edition = "2024"
+description = "Building blocks of a page for any device (html, gemtext, plain text)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]

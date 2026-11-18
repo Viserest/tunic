@@ -1,7 +1,13 @@
 [package]
 name = "calendar"
-version = "0.1.0"
-edition = "2024"
+description = "Calendar, events and contacts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
-router = { version = "0.1.0", path = "../../crates/router" }
+utils = { path = "../utils" }
+router = { path = "../router" }
+database = { path = "../database" }
+user = { path = "../user" }
+element = { path = "../element" }

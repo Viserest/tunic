@@ -1,132 +1,94 @@
-use std::path::Path;
+/// Content types the drive knows by extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MimeType(pub &'static str);
 
-use serde::{Deserialize, Serialize};
-
-/// Mime types have 3 identifiers to its type:
-/// 1. By extension: ".html",
-/// 2. By mime type: "text/html",
-/// 3. By this enum: TextHtml
-#[derive(PartialEq, Clone, Copy, Serialize, Deserialize, Debug)]
-pub enum MimeType {
-    // Text types
-    TextPlain,
-    TextCSV,
-    TextJson,
-    TextHtml,
-    TextCss,
-    TextJavascript,
-    // Image types
-    ImageJpeg,
-    ImagePNG,
-    ImageSVGXML,
-    ImageGIF,
-    ImageAVIF,
-    ImageBMP,
-    // Application types
-    ApplicationOctetStream,
-}
+const TABLE: &[(&str, &str)] = &[
+    ("txt", "text/plain"),
+    ("md", "text/markdown"),
+    ("csv", "text/csv"),
+    ("json", "application/json"),
+    ("html", "text/html"),
+    ("htm", "text/html"),
+    ("css", "text/css"),
+    ("js", "text/javascript"),
+    ("xml", "application/xml"),
+    ("pdf", "application/pdf"),
+    ("zip", "application/zip"),
+    ("gz", "application/gzip"),
+    ("tar", "application/x-tar"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("png", "image/png"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+    ("avif", "image/avif"),
+    ("bmp", "image/bmp"),
+    ("svg", "image/svg+xml"),
+    ("mp3", "audio/mpeg"),
+    ("ogg", "audio/ogg"),
+    ("flac", "audio/flac"),
+    ("wav", "audio/wav"),
+    ("opus", "audio/opus"),
+    ("m4a", "audio/mp4"),
+    ("mp4", "video/mp4"),
+    ("webm", "video/webm"),
+    ("mkv", "video/x-matroska"),
+];
 
 impl MimeType {
-    /// Get [`MimeType`] from a String path.
-    ///
-    /// Defaults to MimeType::ApplicationOctetStream
-    pub fn from_ext<P>(path: P) -> Self
-    where
-        P: AsRef<Path>,
-    {
-        match path.as_ref().extension().and_then(|f| f.to_str()) {
-            Some("txt") => Self::TextPlain,
-            Some("csv") => Self::TextCSV,
-            Some("json") => Self::TextJson,
-            Some("html") => Self::TextHtml,
-            Some("css") => Self::TextCss,
-            Some("js") => Self::TextJavascript,
-            Some("jpeg") | Some("jpg") => Self::ImageJpeg,
-            Some("png") => Self::ImagePNG,
-            Some("svg") => Self::ImageSVGXML,
-            Some("gif") => Self::ImageGIF,
-            Some("avif") => Self::ImageAVIF,
-            Some("bmp") => Self::ImageBMP,
-            _ => Self::ApplicationOctetStream,
-        }
+    pub const OCTET_STREAM: MimeType = MimeType("application/octet-stream");
+
+    pub fn from_ext(name: &str) -> MimeType {
+        let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        TABLE.iter().find(|(e, _)| *e == ext).map(|(_, m)| MimeType(m)).unwrap_or(MimeType::OCTET_STREAM)
     }
 
-    /// Get [`MimeType`] from a String path.
-    ///
-    /// Defaults to MimeType::ApplicationOctetStream
-    pub fn from_mime_type<P>(mime_type: P) -> Self
-    where
-        P: Into<String>,
-    {
-        match mime_type.into().as_str() {
-            "text/plain" => Self::TextPlain,
-            "text/csv" => Self::TextCSV,
-            "text/json" => Self::TextJson,
-            "text/html" => Self::TextHtml,
-            "text/css" => Self::TextCss,
-            "text/javascript" => Self::TextJavascript,
-            "image/jpeg" => Self::ImageJpeg,
-            "image/png" => Self::ImagePNG,
-            "image/svg" => Self::ImageSVGXML,
-            "image/gif" => Self::ImageGIF,
-            "image/avif" => Self::ImageAVIF,
-            "image/bmp" => Self::ImageBMP,
-            _ => Self::ApplicationOctetStream,
-        }
+    pub fn from_mime(m: &str) -> Option<MimeType> {
+        let base = m.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        TABLE.iter().find(|(_, t)| *t == base).map(|(_, t)| MimeType(t))
     }
 
-    /// Get file extension from [`MimeType`].
-    ///
-    /// Defaults to "bin"
-    pub fn to_ext(&self) -> &'static str {
-        match self {
-            Self::TextPlain => "txt",
-            Self::TextCSV => "csv",
-            Self::TextJson => "json",
-            Self::TextHtml => "html",
-            Self::TextCss => "css",
-            Self::TextJavascript => "js",
-            // Image types
-            Self::ImageJpeg => "jpeg",
-            Self::ImagePNG => "png",
-            Self::ImageSVGXML => "svg",
-            Self::ImageGIF => "gif",
-            Self::ImageAVIF => "avif",
-            Self::ImageBMP => "bmp",
-            // Application types
-            _ => "bin",
-        }
-    }
-
-    /// Get file extension from [`MimeType`].
-    ///
-    /// Defaults to "application/octet-stream"
-    pub fn to_mime_type(&self) -> &'static str {
-        match self {
-            Self::TextPlain => "text/plain",
-            Self::TextCSV => "text/csv",
-            Self::TextJson => "text/json",
-            Self::TextHtml => "text/html",
-            Self::TextCss => "text/css",
-            Self::TextJavascript => "text/javascript",
-            // Image types
-            Self::ImageJpeg => "image/jpeg",
-            Self::ImagePNG => "image/png",
-            Self::ImageSVGXML => "image/svg+xml",
-            Self::ImageGIF => "image/gif",
-            Self::ImageAVIF => "image/avif",
-            Self::ImageBMP => "image/bmp",
-            // Application types
-            _ => "application/octet-stream",
-        }
+    pub fn is_media(&self) -> bool {
+        self.0.starts_with("audio/") || self.0.starts_with("video/") || self.0.starts_with("image/")
     }
 }
 
-pub const IMAGE_MIME_TYPES: [MimeType; 6] = [
-    MimeType::ImageJpeg,
-    MimeType::ImagePNG,
-    MimeType::ImageSVGXML,
-    MimeType::ImageGIF,
-    MimeType::ImageAVIF,
-    MimeType::ImageBMP,
-];
+/// Types the browser may render inline from our origin. Everything else (html, svg, xml,
+/// javascript, ...) is served as a download so an uploaded file can never run as a page.
+pub fn safe_to_inline(mime: &str) -> bool {
+    matches!(mime, "text/plain" | "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/avif" | "image/bmp")
+        || mime.starts_with("audio/")
+        || mime.starts_with("video/")
+}
+
+/// Strip any path, control characters and quotes; limit the length. Never returns an empty name.
+pub fn sanitize_filename(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base.chars().filter(|c| !c.is_control() && !matches!(c, '"' | '<' | '>' | ':' | '|' | '?' | '*')).take(200).collect();
+    let cleaned = cleaned.trim().trim_start_matches('.').to_string();
+    if cleaned.is_empty() { "file".into() } else { cleaned }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn types() {
+        assert_eq!(MimeType::from_ext("a.PNG").0, "image/png");
+        assert_eq!(MimeType::from_ext("noext"), MimeType::OCTET_STREAM);
+        assert_eq!(MimeType::from_mime("text/html; charset=utf-8").unwrap().0, "text/html");
+        assert!(MimeType::from_ext("song.flac").is_media());
+        assert!(safe_to_inline("image/png") && !safe_to_inline("text/html") && !safe_to_inline("image/svg+xml"));
+    }
+
+    #[test]
+    fn filenames() {
+        assert_eq!(sanitize_filename("../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_filename("C:\\Users\\a\\b.txt"), "b.txt");
+        assert_eq!(sanitize_filename("we\"ird\r\nname.txt"), "weirdname.txt");
+        assert_eq!(sanitize_filename(""), "file");
+        assert_eq!(sanitize_filename("..."), "file");
+        assert_eq!(sanitize_filename(&"a".repeat(500)).len(), 200);
+    }
+}

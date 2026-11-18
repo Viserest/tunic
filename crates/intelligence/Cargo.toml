@@ -1,6 +1,10 @@
 [package]
 name = "intelligence"
-version = "0.1.0"
-edition = "2024"
+description = "Non-LLM maths engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+utils = { path = "../utils" }
+router = { path = "../router" }

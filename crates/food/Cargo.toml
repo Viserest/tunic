@@ -1,6 +1,13 @@
 [package]
 name = "food"
-version = "0.1.0"
-edition = "2024"
+description = "Workout and nutrition tracking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
+utils = { path = "../utils" }
+router = { path = "../router" }
+database = { path = "../database" }
+user = { path = "../user" }
+element = { path = "../element" }

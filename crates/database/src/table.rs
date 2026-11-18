@@ -1,279 +1,215 @@
-use axum::{Extension, Json, Router, http::StatusCode, response::IntoResponse, routing::post};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::{collections::HashMap, hash::Hash, sync::Arc, vec::IntoIter};
-use tokio::sync::{Mutex, MutexGuard};
+use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
-use super::ListPayload;
+use utils::{Uuid, lock};
 
-/// Async database tables using [`std::collections::HashMap`]
+use crate::{Database, DbError, Record};
+
+/// Typed collection of [`Record`]s inside a scope.
 ///
-/// Uses [`std::sync::Arc`] for cheap cloning
-pub struct Table<K, V>(Arc<Mutex<HashMap<K, Arc<Mutex<V>>>>>);
-
-// K and V have no requirements
-impl<K, V> Table<K, V> {
-    pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(HashMap::new())))
-    }
-    /// Safely lock the table for reading and writing
-    pub async fn lock(&self) -> MutexGuard<'_, HashMap<K, Arc<Mutex<V>>>> {
-        self.0.lock().await
-    }
-    /// Wrapped len function
-    pub async fn len(&self) -> usize {
-        self.lock().await.len()
-    }
-    /// Wrapped values function
-    pub async fn values(&self) -> IntoIter<Arc<Mutex<V>>> {
-        let guard = self.lock().await;
-        let items: Vec<_> = guard.iter().map(|(_, v)| v.clone()).collect();
-        items.into_iter()
-    }
+/// Cheap to clone. [`Table::update`] is an atomic read-modify-write among all tables of the same
+/// database handle in this process (remote databases are not locked across processes).
+pub struct Table<V: Record> {
+    db: Database,
+    lock: Arc<Mutex<()>>,
+    _p: PhantomData<fn() -> V>,
 }
 
-// K must be Equatable and Hashable
-impl<K, V> Table<K, V>
-where
-    K: Eq + Hash,
-{
-    /// Wrapped get function
-    pub async fn get(&self, key: &K) -> Option<Arc<Mutex<V>>> {
-        let inner_guard = self.lock().await;
-        Some(inner_guard.get(key)?.clone())
-    }
-
-    /// Wrapped get_mut function
-    pub async fn get_mut(&self, key: &K) -> Option<Arc<Mutex<V>>> {
-        let mut inner_guard = self.lock().await;
-        Some(inner_guard.get_mut(key)?.clone())
-    }
-    /// Wrapped insert function
-    pub async fn insert(&self, key: K, value: V) -> Option<Arc<Mutex<V>>> {
-        self.lock().await.insert(key, Arc::new(Mutex::new(value)))
-    }
-    /// Wrapped remove function
-    pub async fn remove(&self, key: &K) -> Option<Arc<Mutex<V>>> {
-        self.lock().await.remove(key)
-    }
-}
-
-// K must be Clonable
-impl<K, V> Table<K, V>
-where
-    K: Clone,
-{
-    /// Wrapped iter function
-    pub async fn iter(&self) -> IntoIter<(K, Arc<Mutex<V>>)> {
-        let guard = self.lock().await;
-        let items: Vec<_> = guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        items.into_iter()
-    }
-
-    /// Wrapped keys function
-    pub async fn keys(&self) -> IntoIter<K> {
-        let guard = self.lock().await;
-        let items: Vec<_> = guard.iter().map(|(k, _)| k.clone()).collect();
-        items.into_iter()
-    }
-}
-
-#[derive(Deserialize)]
-pub struct ReadPayload<K> {
-    id: K,
-}
-#[derive(Deserialize)]
-pub struct DeletePayload<K> {
-    id: K,
-    real: bool,
-}
-
-pub trait TableGetKey<K> {
-    fn get_key(&self) -> K;
-}
-pub trait TableValueUpdate<T> {
-    fn update(&self, target: &mut T);
-}
-pub trait TableValueDeleted {
-    fn set_deleted(&mut self) -> bool;
-}
-
-impl<'de, K, V> Table<K, V>
-where
-    K: Eq + Hash + Clone + Deserialize<'de> + Serialize + Send + Sync + 'static,
-    V: TableGetKey<K> + TableValueDeleted + Serialize + Send + Sync + 'static,
-{
-    pub fn router<C, U>(self) -> Router
-    where
-        C: Into<V> + Deserialize<'de>,
-        U: TableValueUpdate<V> + TableGetKey<K> + Deserialize<'de>,
-    {
-        Router::new()
-            .route("/list", post(Self::handle_list))
-            .route("/create", post(Self::handle_create))
-            .route("/read", post(Self::handle_read))
-            .route("/update", post(Self::handle_update))
-            .route("/delete", post(Self::handle_delete))
-            .layer(Extension(self.clone()))
-    }
-    async fn handle_list(
-        Extension(table): Extension<Self>,
-        Json(payload): Json<ListPayload>,
-    ) -> impl IntoResponse {
-        let limit = payload.limit.unwrap_or(20).clamp(1, 100);
-        let offset = payload.offset.unwrap_or(0);
-        // Gather list
-        let mut data = HashMap::with_capacity(limit);
-        for (key, value) in table.iter().await.skip(offset).take(limit) {
-            data.insert(key, serde_json::to_value(&*value.lock().await).unwrap());
-        }
-        // Send list
-        if data.is_empty() {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "msg": "Error finding list",
-                })),
-            )
-                .into_response()
-        } else {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "msg": "Successfully found list",
-                    "content": {
-                        "length": data.len(),
-                        "limit": limit,
-                        "offset": offset,
-                        "data": data,
-                    },
-                })),
-            )
-                .into_response()
-        }
-    }
-    async fn handle_create<C>(
-        Extension(table): Extension<Self>,
-        Json(payload): Json<C>,
-    ) -> impl IntoResponse
-    where
-        C: Into<V> + Deserialize<'de>,
-    {
-        // Convert generic C (or CreatePayload) into generic V
-        let value: V = payload.into();
-        let key = value.get_key();
-        if table.insert(value.get_key(), value).await.is_some() {
-            tracing::warn!("Entry overwrote a key. Continuing...");
-        }
-        (
-            StatusCode::CREATED,
-            Json(json!({
-                "msg": "Successfully created",
-                "content": key,
-            })),
-        )
-            .into_response()
-    }
-    async fn handle_read(
-        Extension(table): Extension<Self>,
-        Json(payload): Json<ReadPayload<K>>,
-    ) -> impl IntoResponse {
-        let data = table.get(&payload.id).await;
-        if let Some(data) = data {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "msg": "Successfully found",
-                    "content": *data.lock().await,
-                })),
-            )
-                .into_response()
-        } else {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "msg": "Nothing found",
-                })),
-            )
-                .into_response()
-        }
-    }
-    async fn handle_update<U>(
-        Extension(table): Extension<Self>,
-        Json(payload): Json<U>,
-    ) -> impl IntoResponse
-    where
-        U: TableValueUpdate<V> + TableGetKey<K> + Deserialize<'de>,
-    {
-        let data = table.get_mut(&payload.get_key()).await;
-        if let Some(data) = data {
-            payload.update(&mut *data.lock().await);
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "msg": "Successfully updated",
-                    "content": &payload.get_key(),
-                })),
-            )
-                .into_response()
-        } else {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "msg": "Nothing found"
-                })),
-            )
-                .into_response()
-        }
-    }
-    async fn handle_delete(
-        Extension(table): Extension<Self>,
-        Json(payload): Json<DeletePayload<K>>,
-    ) -> impl IntoResponse {
-        // Successful delete response
-        let r = (
-            StatusCode::OK,
-            Json(json!({
-                "msg": "Successfully deleted",
-            })),
-        )
-            .into_response();
-        if payload.real {
-            if table.remove(&payload.id).await.is_some() {
-                return r;
-            }
-        } else {
-            let data = table.get(&payload.id).await;
-            if let Some(data) = data {
-                if (*data.lock().await).set_deleted() {
-                    return r;
-                } else {
-                    if table.remove(&payload.id).await.is_some() {
-                        return r;
-                    }
-                }
-            }
-        }
-        // Default delete response
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "msg": "Nothing found",
-            })),
-        )
-            .into_response()
-    }
-}
-
-impl<K, V> Clone for Table<K, V> {
-    /// Clone the inner arc
+impl<V: Record> Clone for Table<V> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Table { db: self.db.clone(), lock: self.lock.clone(), _p: PhantomData }
     }
 }
 
-impl<K, V> Default for Table<K, V> {
-    fn default() -> Self {
-        Self::new()
+impl<V: Record> Table<V> {
+    /// `db` must be a scoped handle (see [`Database::scope`]).
+    pub fn new(db: Database) -> Result<Self, DbError> {
+        if db.scope_name().is_none() {
+            return Err(DbError::ScopeRequired);
+        }
+        let lock = db.collection_lock(V::COLLECTION)?;
+        Ok(Table { db, lock, _p: PhantomData })
+    }
+
+    pub fn database(&self) -> &Database {
+        &self.db
+    }
+
+    fn decode(id: &str, v: &utils::Value) -> Result<V, DbError> {
+        V::from_value(v).map_err(|e| DbError::Invalid(format!("{}/{id}: {e}", V::COLLECTION)))
+    }
+
+    /// Insert or overwrite.
+    pub fn insert(&self, v: &V) -> Result<(), DbError> {
+        let _g = lock(&self.lock);
+        self.db.put(V::COLLECTION, &v.id().to_string(), &v.to_value())
+    }
+
+    /// Insert only if the id is free. Returns `false` if it already exists.
+    pub fn create(&self, v: &V) -> Result<bool, DbError> {
+        let _g = lock(&self.lock);
+        let id = v.id().to_string();
+        if self.db.get(V::COLLECTION, &id)?.is_some() {
+            return Ok(false);
+        }
+        self.db.put(V::COLLECTION, &id, &v.to_value())?;
+        Ok(true)
+    }
+
+    pub fn get(&self, id: &Uuid) -> Result<Option<V>, DbError> {
+        let id = id.to_string();
+        self.db.get(V::COLLECTION, &id)?.map(|v| Self::decode(&id, &v)).transpose()
+    }
+
+    /// Atomically modify a record. Returns the new value, or `None` if it does not exist.
+    pub fn update(&self, id: &Uuid, f: impl FnOnce(&mut V)) -> Result<Option<V>, DbError> {
+        let _g = lock(&self.lock);
+        let sid = id.to_string();
+        let Some(raw) = self.db.get(V::COLLECTION, &sid)? else { return Ok(None) };
+        let mut v = Self::decode(&sid, &raw)?;
+        f(&mut v);
+        if v.id() != *id {
+            return Err(DbError::Invalid("a record's id cannot change".into()));
+        }
+        self.db.put(V::COLLECTION, &sid, &v.to_value())?;
+        Ok(Some(v))
+    }
+
+    pub fn remove(&self, id: &Uuid) -> Result<bool, DbError> {
+        let _g = lock(&self.lock);
+        self.db.delete(V::COLLECTION, &id.to_string())
+    }
+
+    pub fn all(&self) -> Result<Vec<V>, DbError> {
+        self.db.list(V::COLLECTION)?.iter().map(|(id, v)| Self::decode(id, v)).collect()
+    }
+
+    pub fn count(&self) -> Result<usize, DbError> {
+        Ok(self.db.list(V::COLLECTION)?.len())
+    }
+
+    /// A page of records ordered by id.
+    pub fn list(&self, offset: usize, limit: usize) -> Result<Vec<V>, DbError> {
+        self.db.list(V::COLLECTION)?.iter().skip(offset).take(limit).map(|(id, v)| Self::decode(id, v)).collect()
+    }
+
+    pub fn find(&self, pred: impl Fn(&V) -> bool) -> Result<Vec<V>, DbError> {
+        Ok(self.all()?.into_iter().filter(|v| pred(v)).collect())
+    }
+
+    pub fn first(&self, pred: impl Fn(&V) -> bool) -> Result<Option<V>, DbError> {
+        Ok(self.all()?.into_iter().find(|v| pred(v)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Record;
+
+    #[derive(Clone, Debug, PartialEq, Record)]
+    #[record(collection = "widgets")]
+    struct Widget {
+        id: Uuid,
+        name: String,
+        #[record(default)]
+        count: u32,
+        tags: Vec<String>,
+        owner: Option<Uuid>,
+        #[record(hidden)]
+        secret: String,
+    }
+
+    fn w(name: &str) -> Widget {
+        Widget { id: Uuid::new_v4(), name: name.into(), count: 0, tags: vec!["a".into()], owner: None, secret: "s3cret".into() }
+    }
+
+    fn table() -> Table<Widget> {
+        Table::new(Database::memory().scope("test").unwrap()).unwrap()
+    }
+
+    #[test]
+    fn crud() {
+        let t = table();
+        let a = w("a");
+        assert!(t.create(&a).unwrap());
+        assert!(!t.create(&a).unwrap());
+        assert_eq!(t.get(&a.id).unwrap(), Some(a.clone()));
+        let up = t.update(&a.id, |x| x.count += 5).unwrap().unwrap();
+        assert_eq!(up.count, 5);
+        assert!(t.update(&Uuid::new_v4(), |_| {}).unwrap().is_none());
+        assert!(t.update(&a.id, |x| x.id = Uuid::new_v4()).is_err());
+        assert_eq!(t.count().unwrap(), 1);
+        assert!(t.remove(&a.id).unwrap());
+        assert_eq!(t.get(&a.id).unwrap(), None);
+    }
+
+    #[test]
+    fn queries_and_pages() {
+        let t = table();
+        for i in 0..10 {
+            t.insert(&w(&format!("w{i}"))).unwrap();
+        }
+        assert_eq!(t.all().unwrap().len(), 10);
+        assert_eq!(t.list(3, 4).unwrap().len(), 4);
+        assert_eq!(t.list(8, 4).unwrap().len(), 2);
+        assert_eq!(t.find(|w| w.name == "w3").unwrap().len(), 1);
+        assert!(t.first(|w| w.name == "zzz").unwrap().is_none());
+    }
+
+    #[test]
+    fn root_handle_is_rejected_and_scopes_isolate() {
+        assert!(Table::<Widget>::new(Database::memory()).is_err());
+        let root = Database::memory();
+        let a: Table<Widget> = Table::new(root.scope("a").unwrap()).unwrap();
+        let b: Table<Widget> = Table::new(root.scope("b").unwrap()).unwrap();
+        a.insert(&w("x")).unwrap();
+        assert_eq!(a.count().unwrap(), 1);
+        assert_eq!(b.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn derive_semantics() {
+        let x = w("n");
+        let v = x.to_value();
+        assert_eq!(v.get("name").unwrap().as_str(), Some("n"));
+        assert!(v.get("owner").unwrap().is_null());
+        // default + optional fields may be missing
+        let mut raw = v.clone();
+        raw.as_object_mut().unwrap().remove("count");
+        raw.as_object_mut().unwrap().remove("owner");
+        let back = Widget::from_value(&raw).unwrap();
+        assert_eq!(back.count, 0);
+        assert_eq!(back.owner, None);
+        // required fields are errors, with the field named
+        raw.as_object_mut().unwrap().remove("name");
+        assert!(Widget::from_value(&raw).unwrap_err().contains("name"));
+        assert!(Widget::from_value(&utils::Value::Int(1)).is_err());
+        // hidden fields
+        assert_eq!(Widget::hidden_fields(), &["secret"]);
+        assert!(x.public_value().get("secret").is_none());
+        assert!(x.to_value().get("secret").is_some());
+    }
+
+    #[test]
+    fn concurrent_updates_do_not_lose_writes() {
+        let t = table();
+        let a = w("c");
+        t.insert(&a).unwrap();
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let t = t.clone();
+                let id = a.id;
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        t.update(&id, |w| w.count += 1).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(t.get(&a.id).unwrap().unwrap().count, 400);
     }
 }

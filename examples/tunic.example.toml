@@ -1,0 +1,57 @@
+# Every setting is optional. Priority: command line > tunic.toml > TUNIC_* environment variables.
+# `tunic --help` lists all settings, `tunic --print-config` shows the effective values.
+
+[data]
+dir = "data"                       # filesystem database and stored files live here
+
+# Web router is enabled
+[router]
+enabled = true
+
+# Protocols: true = default port, false = off, a number = that port.
+# https and gemini need TLS, which tunic does not ship; see README ("Not built").
+[router.protocols]
+http = 8080
+gopher = 7070
+
+# All router tags are enabled
+[router.tags]
+all = true
+
+# Tag "public": everyone. Tag "admin": only this network. (Default for admin: loopback only.)
+[router.access]
+public = "0.0.0.0"
+admin = "10.1.0.0/16"
+
+# Reverse proxy works like caddy or nginx
+[router.reverse-proxy]
+"example.com" = "localhost:2455"
+"illustration.com" = "localhost:2456"
+
+# Database server: other nodes can use this node's data over port 54000.
+# Binding to anything but 127.0.0.1 requires a token.
+[database]
+enabled = true
+bind = "0.0.0.0"
+port = 54000
+token = "change-me"
+
+[database.tokens]                  # extra tokens limited to one scope
+"team-a-token" = "team-a"
+
+[user]
+admin-name = "admin"
+# admin-password = "..."           # when unset a password is generated and printed once
+
+[drive]
+max-file-mb = 64
+quota-mb = 0
+
+[messages]
+# ingest-token = "..."             # enables POST /message/ingest/:source for bridges
+
+# Mesh: optional port, and at least one node to join (unless this is the first node)
+[p2p]
+port = 7000
+# join = ["10.0.0.1:7000"]
+# token = "shared-mesh-secret"
