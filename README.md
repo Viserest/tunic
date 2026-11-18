@@ -1,11 +1,8 @@
 # Tunic
 
-One executable, many optional parts, all of them nodes of a distributed mesh. Use it as a binary
-(`apps/tunic`) configured by command line, `tunic.toml` or environment variables, or as a Rust
-library where you add your own routes, tables, features and database scopes.
+One executable, many optional parts, all of them nodes of a distributed mesh. Use it as a binary (`apps/tunic`) configured by command line, `tunic.toml` or environment variables, or as a Rust library where you add your own routes, tables, features and database scopes.
 
-"Feature" in this project means a switchable part of the application (drive, calendar, hpc.worker, ...).
-It has nothing to do with cargo features.
+"Feature" in this project means a switchable part of the application (drive, calendar, hpc.worker, ...). It has nothing to do with cargo features.
 
 ```
 cargo build --release -p tunic-app        # target/release/tunic
@@ -14,8 +11,7 @@ tunic --list-features
 tunic                                     # http on :8080 with the default features, data in ./data
 ```
 
-On first start an administrator is created (`user.admin-name`, default `admin`). If
-`user.admin-password` / `TUNIC_USER_ADMIN_PASSWORD` is not set, a password is generated and printed once.
+On first start an administrator is created (`user.admin-name`, default `admin`). If `user.admin-password` / `TUNIC_USER_ADMIN_PASSWORD` is not set, a password is generated and printed once.
 
 ## Features
 
@@ -32,21 +28,15 @@ On first start an administrator is created (`user.admin-name`, default `admin`).
 
 Besides features every executable has three core parts:
 
-* **router** (`router.*`): Http/1.x, Gopher and Gemini on any port, route *tags* (`public`, `admin`, `internal`)
-  with per-tag network access rules, virtual hosts and a reverse proxy.
-* **database** (`database.*`): scoped storage (memory, filesystem, or a remote database server), optionally
-  *served* to other nodes over TCP, with scope-limited tokens.
-* **p2p** (`p2p.*`): the mesh. Every node has an **optional** port. At least one node of a mesh has a port;
-  every other node needs `--join <address of any node>`. Nodes gossip peers and roles and call each other's services.
+* **router** (`router.*`): Http/1.x, Gopher and Gemini on any port, route *tags* (`public`, `admin`, `internal`) with per-tag network access rules, virtual hosts and a reverse proxy.
+* **database** (`database.*`): scoped storage (memory, filesystem, or a remote database server), optionally *served* to other nodes over TCP, with scope-limited tokens.
+* **p2p** (`p2p.*`): the mesh. Every node has an **optional** port. At least one node of a mesh has a port; every other node needs `--join <address of any node>`. Nodes gossip peers and roles and call each other's services.
 
 ## Configuration
 
-Sources, lowest to highest priority: defaults → environment (`TUNIC_ROUTER_PROTOCOLS_HTTP`, `.` and `-` become `_`)
-→ `tunic.toml` (`--config file`, `TUNIC_CONFIG`, or `./tunic.toml`) → command line. Unknown keys and wrong types
-are errors, not silently ignored. `tunic --print-config` shows the result (secrets hidden).
+Sources, lowest to highest priority: defaults → environment (`TUNIC_ROUTER_PROTOCOLS_HTTP`, `.` and `-` become `_`) → `tunic.toml` (`--config file`, `TUNIC_CONFIG`, or `./tunic.toml`) → command line. Unknown keys and wrong types are errors, not silently ignored. `tunic --print-config` shows the result (secrets hidden).
 
-Command line: `--router.protocols.http 9000`, `--enable drive`, `--disable food`, `--join host:7000` (repeatable),
-`--router.reverse-proxy.example.com localhost:2455`, `--set key=value`, `--print-config`, `--list-features`.
+Command line: `--router.protocols.http 9000`, `--enable drive`, `--disable food`, `--join host:7000` (repeatable), `--router.reverse-proxy.example.com localhost:2455`, `--set key=value`, `--print-config`, `--list-features`.
 
 See [`examples/tunic.example.toml`](examples/tunic.example.toml) for a commented file:
 
@@ -74,24 +64,54 @@ port = 54000
 token = "change-me"      # required when binding to anything but 127.0.0.1
 ```
 
-Safe defaults: `admin`/`internal` routes only answer on loopback until `router.access.admin` says otherwise; the
-database server binds to 127.0.0.1 and refuses to listen publicly without a token.
+Safe defaults: `admin`/`internal` routes only answer on loopback until `router.access.admin` says otherwise; the database server binds to 127.0.0.1 and refuses to listen publicly without a token.
 
-### Database modes
+## Database
 
-`database.mode = memory | fs | remote` (default `fs`, in `<data.dir>/db`). `remote` needs `database.connect`
-(and `database.token`). `database.route` sends scope prefixes to other servers (`hpc = "TOKEN@server6:54000"`),
-so one node can use several databases at once. Because this node's features use their own database directly, a node
-that also serves its database does not connect back to itself.
+### Modes
+
+`database.mode = memory | fs | remote` (default `fs`, in `<data.dir>/db`). `remote` needs `database.connect` (and `database.token`). `database.route` sends scope prefixes to other servers (`hpc = "TOKEN@server6:54000"`), so one node can use several databases at once. Because this node's features use their own database directly, a node that also serves its database does not connect back to itself.
+
+### Schema
+
+#### Delegated
+A scope belongs to 1 database.
+
+```
+Database 1: tunic
+Database 2: app1
+Database 3: app2, app3
+```
+* Database 3 holds two scopes but those scopes aren't at anyother database.
+
+#### Synchronized
+Each scope is a duplicate at all other databases.
+
+```
+Database 1: tunic, app1, app2
+Database 2: tunic, app1, app2
+Database 3: tunic, app1, app2
+Database 4: app3
+```
+* Database 4 isn't part of the synchronized group.
+
+#### Pooled
+A group of databases hold a single scope.
+
+```
+Database 1: tunic, app1
+Database 2: app1/users [50%]
+Database 3: app1/users [50%]
+Database 3: app2
+```
+* Database 2 and 3 are the group. The others are delegated.
 
 ## Distributed layouts
 
 * [`examples/multi-app-one-database.md`](examples/multi-app-one-database.md): several applications and one database server.
-* [`examples/hpc-cluster.md`](examples/hpc-cluster.md): a scheduler dashboard, workers and two databases. Workers are
-  pull-based, so they need no open port; adding another worker is `tunic --enable hpc.worker --join <any node>`.
+* [`examples/hpc-cluster.md`](examples/hpc-cluster.md): a scheduler dashboard, workers and two databases. Workers are pull-based, so they need no open port; adding another worker is `tunic --enable hpc.worker --join <any node>`.
 
-The HPC layer was verified end to end both in-process (three passive worker nodes counting primes below 2,000,000,
-= 148933) and as separate release-binary processes.
+The HPC layer was verified end to end both in-process (three passive worker nodes counting primes below 2,000,000, = 148933) and as separate release-binary processes.
 
 ## As a library
 
@@ -128,12 +148,9 @@ fn main() {
 
 This example is built from `crates/tunic/examples/library.rs`.
 
-* The root `Database` has **no** data access: `db.scope("a/b")` is required for every read and write, and remote
-  tokens can be limited to a scope.
-* Implement `tunic::Feature` for reusable features: name (= config section), options, `requires()`, `start(ctx)`.
-  `App::empty()` starts with none.
-* `App::database(db)` supplies your own database, `App::tasks(registry)` your own HPC job kinds,
-  `App::acceptor("https" | "gemini", acceptor)` a TLS implementation.
+* The root `Database` has **no** data access: `db.scope("a/b")` is required for every read and write, and remote tokens can be limited to a scope.
+* Implement `tunic::Feature` for reusable features: name (= config section), options, `requires()`, `start(ctx)`. `App::empty()` starts with none.
+* `App::database(db)` supplies your own database, `App::tasks(registry)` your own HPC job kinds, `App::acceptor("https" | "gemini", acceptor)` a TLS implementation.
 * `Running::get::<Users>()` etc. return the services features published; `Running::addr("http")` returns bound addresses.
 
 ## Crates
@@ -153,24 +170,49 @@ crates/tunic     configuration, features, App builder, CLI
 
 ## Not built (honest list)
 
-* **No TLS.** `https` and Gemini (which requires TLS) are implemented as protocol codecs behind an `Acceptor` trait;
-  starting them without an acceptor is an error that says so. Terminate TLS in front (a reverse proxy) or supply an acceptor.
+* **No TLS.** `https` and Gemini (which requires TLS) are implemented as protocol codecs behind an `Acceptor` trait; starting them without an acceptor is an error that says so. Terminate TLS in front (a reverse proxy) or supply an acceptor.
 * **HTTP/2 and HTTP/3** are not implemented; only HTTP/1.x.
-* **P2P traffic is not encrypted**; it is plain TCP with an optional shared secret (`p2p.token`). Run it on a private
-  network or tunnel. There is no Tor node or I2P router.
-* **Messages**: no native XMPP, Signal, SimpleX, Teams, WhatsApp or Snapchat. What exists: the ingest endpoint, the
-  relay protocol and the `Bridge` trait, which are the places such bridges plug in.
+* **P2P traffic is not encrypted**; it is plain TCP with an optional shared secret (`p2p.token`). Run it on a private network or tunnel. There is no Tor node or I2P router.
+* **Messages**: no native XMPP, Signal, SimpleX, Teams, WhatsApp or Snapchat. What exists: the ingest endpoint, the relay protocol and the `Bridge` trait, which are the places such bridges plug in.
 * **Database protocols**: only the custom binary protocol. No SQL, FTP, rsync, LDAP.
 * **Passwords** use PBKDF2-HMAC-SHA256, not argon2, because the project is built with the standard library only.
-* The README's `Artist/Album/Song` generated-lookups idea is not implemented; `#[derive(Record)]` gives typed
-  records and tables, with relations expressed as ids.
-* Everything is dependency-free (std only) because the build environment had no network access, so the original
-  async/tokio stack was not used. Servers are thread-per-connection with limits, not an async runtime.
+* The README's `Artist/Album/Song` generated-lookups idea is not implemented; `#[derive(Record)]` gives typed records and tables, with relations expressed as ids.
+* Everything is dependency-free (std only) because the build environment had no network access, so the original async/tokio stack was not used. Servers are thread-per-connection with limits, not an async runtime.
 
 ## Tests
 
-`cargo test --workspace` (155 tests): unit tests per crate, protocol tests over real sockets, a multi-node HPC
-cluster, remote and routed databases, and whole-app tests for config priority, feature switching, reverse proxy,
-access rules and library use.
+`cargo test --workspace` (155 tests): unit tests per crate, protocol tests over real sockets, a multi-node HPC cluster, remote and routed databases, and whole-app tests for config priority, feature switching, reverse proxy, access rules and library use.
 
 License: GPL-2.0-only (see LICENSE).
+
+## Example on how to design
+
+Application
+  Server 1
+    Tunic Router
+    App1 Router
+    App2 Router
+    App3 Router
+    App4 Router
+Database
+  Server 2
+    Tunic Scope
+  Server 3
+    App1 Scope
+    App3 Scope
+    App4 Scope
+  Server 4
+    App2 Scope
+HPC
+  Server 5-9
+    Any Scope
+  Server 10-29
+    App2/FreeTier Scope
+  Server 30-99
+    App2/PaidTier Scope
+External
+  I2p
+  Tor
+  XMPP
+  Signal
+  etc
