@@ -131,69 +131,29 @@ impl Element {
 }
 
 /// Short-hand element creation
-///
-/// Create an empty div
-/// ```rust
-/// tag!("div") -> "Div {attributes: none, children: none}"
-/// ```
-/// ```html
-/// <div></div>
-/// ```
-///
-/// Create a div with attributes
-/// ```rust
-/// tag!("div", ["class" => "row"]);
-/// ```
-/// ```html
-/// <div class="row"></div>
-/// ```
-///
-/// Create a div with children elements
-/// ```rust
-/// tag!("div", {tag!("p")});
-/// ```
-/// ```html
-/// <div><p></p></div>
-/// ```
-///
-/// Create a div with attributes and children elements
-/// ```rust
-/// tag!("div", ["class" => "row"], {tag!("p")});
-/// ```
-/// ```html
-/// <div class="row"><p></p></div>
-/// ```
 #[allow(unused_macros)]
 macro_rules! tag {
     // just tag name
-    ($name:literal) => {
-        Element::new($name)
-    };
+    ($name:literal) => tag!(@, $name, {}, []);
 
     // tagname and attributes
     ($name:literal,
-        [$( $key:expr => $value:expr ),+ $(,)?]
-    ) => {
-        Element::new($name)
-            .append_attributes(vec![
-                $(($key, $value)),+
-            ])
-    };
+        {$( $key:expr : $value:expr ),+ $(,)?}
+    ) => tag!(@, $name,
+        {$(($key, $value)),+}, []
+    );
 
     // tagname and children
     ($name:literal,
-        {$( $children:expr ),+ $(,)?}
-    ) => {
-        Element::new($name)
-            .append_children(vec![
-                $($children),+
-            ])
-    };
+        [$( $children:expr ),+ $(,)?]
+    ) => tag!(@, $name,
+        {}, [$($children),+]
+    );
 
     // tagname, attributes and children
-    ($name:literal,
-        [$( $key:expr => $value:expr ),+ $(,)?],
-        {$( $children:expr ),+ $(,)?}
+    (@, $name:literal,
+        {$( $key:expr => $value:expr ),+ $(,)?},
+        [$( $children:expr ),+ $(,)?]
     ) => {
         Element::new($name)
             .append_attributes(vec![
